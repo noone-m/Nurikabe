@@ -3,8 +3,9 @@
 % Dynamic predicate to store fixed cells
 :- dynamic fxdCell/3.
 :- dynamic solved_cell/3.
-
+:- dynamic grid_size/2.
 % check if the cell belong to the grid
+% Custom sleep predicate for fractional seconds
 
 within_grid(I, J) :-
     grid_size(Imax, Jmax),
@@ -43,6 +44,7 @@ start_game :-
 
 % Draw the board with grey cells
 draw_board(Rows, Cols, Canvas) :-
+    assertz(grid_size(Rows, Cols)),
     send(Canvas, clear),      % Clear canvas if re-drawing
 
     % Calculate cell size based on the number of rows and columns
@@ -100,14 +102,30 @@ update_cell(Canvas, I, J, Color, CellSize, Number) :-
     new(Text, text(string('%s', Number), center)),
     send(Text, font, font(times, bold, 15)),  % Adjust font size as needed
     send(Canvas, display, Text, point(MiddleX, MiddleY)).
-% Dummy solve function for demonstration
+
+% Update the cell at (I, J) to blue
+update_cell_to_blue(I, J) :-
+    % Make sure the cell is within the grid and not already solved
+    (   within_grid(I, J),\+ solved_cell(I, J, _) ->
+    % Retrieve the current canvas and cell size
+    current_canvas(Canvas),
+    current_cell_size(CellSize),
+
+    % Update the cell to blue
+    draw_cell(Canvas, I, J, blue, CellSize),
+    assertz(solved_cell(I, J, blue))
+
+    ; true
+    ).
+
 solve_nurikabe :-
-    !.
+    findall(_,all_fixed_cells_green,_),
+    findall(_, island_of_1, _),
+    separate_adjacent_islands,
+    separate_diagonally_adjacent_islands.
 % Entry point
 :- initialization(start_game).
 
-
-grid_size(7,7).
 
 %fxd_cell(row,column,numbe)
 %fxdCell(1,2,3).
@@ -286,40 +304,130 @@ delete_all_dynamic_facts :-
     retractall(fxdCell(_, _, _)),      % Remove all fxdCell/3 facts
     retractall(solved_cell(_, _, _)),
     retractall(current_canvas(_)),     % Remove any current canvas facts
-    retractall(current_cell_size(_)).  % Remove any current cell size facts
+    retractall(current_cell_size(_)),  % Remove any current cell size facts
+    retractall(grid_size(_,_)).
 % solutions
 %
+all_fixed_cells_green :-
+    fxdCell(I,J,Number),
+    current_canvas(Canvas),
+    current_cell_size(CellSize),
+    assertz(solved_cell(I, J, green)),
+    update_cell(Canvas, I, J, green, CellSize, Number).
+
 island_of_1 :-
     fxdCell(I, J, 1),  % Find fixed cells with number 1
 
     write('1'),
+   %assertz(solved_cell(I, J, green)),  % Assert the solved cell with blue color
+   %current_canvas(Canvas),  % Retrieve the current Canvas from the environment
+   % current_cell_size(CellSize),  % Retrieve the current CellSize from the environment
+   % update_cell(Canvas, I, J, green, CellSize, 1) ,
+    I1 is I + 1,
+    update_cell_to_blue(I1,J),
+    J1 is J + 1,
+    update_cell_to_blue(I,J1),
+    I2 is I - 1,
+    update_cell_to_blue(I2,J),
+    J2 is J - 1,
+    update_cell_to_blue(I,J2).
 
-    assertz(solved_cell(I, J, green)),  % Assert the solved cell with blue color
-    current_canvas(Canvas),  % Retrieve the current Canvas from the environment
-    current_cell_size(CellSize),  % Retrieve the current CellSize from the environment
+separate_adjacent_islands :-
+    % Retrieve all fixed cells (clues)
+    findall((I, J, Num), fxdCell(I, J, Num), AllFixedCells),
 
-    % Conditional drawing and asserting for adjacent cells
-    ( I1 is I + 1, within_grid(I1, J) ->
-        draw_cell(Canvas, I1, J, blue, CellSize),
-        assertz(solved_cell(I1, J, blue))
-    ; true
-    ),
+    % Check each pair of fixed cells to find those separated by one cell in the same row or column
+    forall((member((I1, J1, _), AllFixedCells), member((I2, J2, _), AllFixedCells)),
+           (
+               % Same row, separated by one column
+               (I1 =:= I2, J1 =:= J2 - 2 ->
+                   Jmid is (J1 + J2) // 2,
+                   \+ fxdCell(I1, Jmid, _),  % Ensure the middle cell is not already a fixed cell
+                   update_cell_to_blue(I1, Jmid)  % Mark the middle cell as blue
+               ; true),
 
-    ( J1 is J + 1, within_grid(I, J1) ->
-        draw_cell(Canvas, I, J1, blue, CellSize),
-        assertz(solved_cell(I, J1, blue))
-    ; true
-    ),
-
-    ( I2 is I - 1, within_grid(I2, J) ->
-        draw_cell(Canvas, I2, J, blue, CellSize),
-        assertz(solved_cell(I2, J, blue))
-    ; true
-    ),
-
-    ( J2 is J - 1, within_grid(I, J2) ->
-        draw_cell(Canvas, I, J2, blue, CellSize),
-        assertz(solved_cell(I, J2, blue))
-    ; true
+               % Same column, separated by one row
+               (J1 =:= J2, I1 =:= I2 - 2 ->
+                   Imid is (I1 + I2) // 2,
+                   \+ fxdCell(Imid, J1, _),  % Ensure the middle cell is not already a fixed cell
+                   update_cell_to_blue(Imid, J1)  % Mark the middle cell as blue
+               ; true)
+           )
     ).
 
+% Predicate to handle diagonally adjacent clues
+separate_diagonally_adjacent_islands :-
+    % Retrieve all fixed cells (clues)
+    findall((I, J, Num), fxdCell(I, J, Num), AllFixedCells),
+
+    % Check each pair of fixed cells to find those that are diagonally adjacent
+    forall((member((I1, J1, _), AllFixedCells), member((I2, J2, _), AllFixedCells)),
+           (
+               % Diagonally adjacent top-left to bottom-right
+               (I2 =:= I1 + 1, J2 =:= J1 + 1 ->
+                   update_cell_to_blue(I2,J1),
+                   update_cell_to_blue(I1,J2)
+               ; true),
+
+               % Diagonally adjacent top-right to bottom-left
+               (I2 =:= I1 + 1, J2 =:= J1 - 1 ->
+
+                   update_cell_to_blue(I1,J2),
+                   update_cell_to_blue(I2,J1)
+
+               ; true)
+
+           )
+    ).
+
+
+% Check if a cell (I, J) is surrounded by blue cells horizontally and vertically
+is_surrounded_by_sea(I, J) :-
+    \+ solved_cell(I, J, _),  % Ensure the cell itself is not solved
+    \+ fxdCell(I, J, _),      % Ensure the cell is not a fixed cell
+    I1 is I + 1,
+    I2 is I - 1,
+    J1 is J + 1,
+    J2 is J - 1,
+
+    % Check the surrounding cells
+    % Continue if adjacent cells are out of bounds, but fail if they are not blue
+    (adjacent(I, J, I1, J) -> solved_cell(I1, J, blue) ; true), % Down
+    (adjacent(I, J, I2, J) -> solved_cell(I2, J, blue) ; true), % Up
+    (adjacent(I, J, I, J1) -> solved_cell(I, J1, blue) ; true), % Right
+    (adjacent(I, J, I, J2) -> solved_cell(I, J2, blue) ; true). % Left
+
+% Mark all surrounded cells as blue
+mark_surrounded_squares_as_sea :-
+    % Iterate through each cell in the grid
+    grid_size(Rows, Cols),
+    forall(
+        (between(1, Rows, I), between(1, Cols, J), is_surrounded_by_sea(I, J)),
+        (
+            update_cell_to_blue(I, J)
+
+        )
+    ).
+
+
+
+
+% Count valid unsolved cells around a blue cell (I, J)
+count_empty_adjacent_cells(I, J, Count) :-
+    findall((INew, JNew),
+            (
+                adjacent(I, J, INew, JNew),
+                \+solved_cell(INew,JNew,_)
+            ),
+            AdjacentCells),
+    length(AdjacentCells, Count).
+
+% Find isolated blue cells that need to be expanded
+find_isolated_blue_cells(IsolatedBlueCells) :-
+    findall((I, J),
+            (
+                solved_cell(I, J, blue),  % It is a blue cell
+                count_empty_adjacent_cells(I, J, EmptyCount),
+                EmptyCount =:= 1          % Exactly one adjacent empty cell
+            ),
+            IsolatedBlueCells).
