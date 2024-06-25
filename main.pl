@@ -122,7 +122,9 @@ solve_nurikabe :-
     findall(_,all_fixed_cells_green,_),
     findall(_, island_of_1, _),
     separate_adjacent_islands,
-    separate_diagonally_adjacent_islands.
+    separate_diagonally_adjacent_islands,
+    mark_surrounded_squares_as_sea,
+    expand_isolated_blue_cells.
 % Entry point
 :- initialization(start_game).
 
@@ -202,6 +204,11 @@ adjacent(I, J, I, J1) :- J1 is J - 1, within_grid(I, J1).  % Left
 adjacent(I, J, I, J1) :- J1 is J + 1, within_grid(I, J1). % Right
 adjacent(I, J, I1, J) :- I1 is I - 1, within_grid(I1, J). % Up
 adjacent(I, J, I1, J) :- I1 is I + 1, within_grid(I1, J).  % Down
+adjacent_no_strict(I, J, I, J1) :- J1 is J - 1.  % Left
+adjacent_no_strict(I, J, I, J1) :- J1 is J + 1. % Right
+adjacent_no_strict(I, J, I1, J) :- I1 is I - 1. % Up
+adjacent_no_strict(I, J, I1, J) :- I1 is I + 1.  % Down
+
 
 % Find adjacent cells of the same color
 adjacent_same_color(I, J, I1,J1) :-
@@ -318,8 +325,7 @@ all_fixed_cells_green :-
 island_of_1 :-
     fxdCell(I, J, 1),  % Find fixed cells with number 1
 
-    write('1'),
-   %assertz(solved_cell(I, J, green)),  % Assert the solved cell with blue color
+%assertz(solved_cell(I, J, green)),  % Assert the solved cell with blue color
    %current_canvas(Canvas),  % Retrieve the current Canvas from the environment
    % current_cell_size(CellSize),  % Retrieve the current CellSize from the environment
    % update_cell(Canvas, I, J, green, CellSize, 1) ,
@@ -412,22 +418,101 @@ mark_surrounded_squares_as_sea :-
 
 
 
-% Count valid unsolved cells around a blue cell (I, J)
-count_empty_adjacent_cells(I, J, Count) :-
+
+
+
+% Count the number of invalid adjacent cells around a cell (I, J)
+count_closed_adjacents(I, J, Count) :-
+    findall((INew, JNew),
+            (
+
+                adjacent_no_strict(I, J, INew, JNew),
+                (fxdCell(INew, JNew, _); \+within_grid(INew,JNew))
+               ),
+            ClosedSurroundnigs),
+    length(ClosedSurroundnigs, Count).
+
+% Count the number of valid unsolved cells around a blue cell (I, J)
+count_open_adjacents(I, J, Count) :-
+    findall((INew, JNew),
+            (
+                write(INew),
+                write(JNew),
+                adjacent(I, J, INew, JNew),
+                \+ solved_cell(INew, JNew, _),
+                write('\n I is '),
+                write(INew),
+                write('\n J is '),
+                write(JNew)
+            ),
+            OpenSurroundings),
+    length(OpenSurroundings, Count).
+
+count_blue_adjacents(I, J, Count) :-
     findall((INew, JNew),
             (
                 adjacent(I, J, INew, JNew),
-                \+solved_cell(INew,JNew,_)
+                solved_cell(INew, JNew, blue)
             ),
-            AdjacentCells),
-    length(AdjacentCells, Count).
+            OpenSurroundings),
+    length(OpenSurroundings, Count).
 
 % Find isolated blue cells that need to be expanded
 find_isolated_blue_cells(IsolatedBlueCells) :-
     findall((I, J),
             (
-                solved_cell(I, J, blue),  % It is a blue cell
-                count_empty_adjacent_cells(I, J, EmptyCount),
-                EmptyCount =:= 1          % Exactly one adjacent empty cell
+                solved_cell(I, J, blue),  % The cell is blue
+
+                count_closed_adjacents(I, J, ClosedCount),
+                ClosedCount =:= 3,       % Exactly three invalid adjacent cells
+                count_open_adjacents(I, J, OpenCount),
+                OpenCount =:= 1  % Exactly one valid unsolved adjacent cell
             ),
             IsolatedBlueCells).
+
+
+% Expand isolated blue cells by marking their valid adjacent cells as blue
+expand_isolated_blue_cells :-
+    find_isolated_blue_cells(IsolatedBlueCells),
+    forall(
+        member((I, J), IsolatedBlueCells),
+        (
+            findall((INew, JNew),
+                    (
+                        adjacent(I, J, INew, JNew),
+                        \+ solved_cell(INew, JNew, _),
+                        \+ fxdCell(INew, JNew, _)
+                    ),
+                    [(TargetI, TargetJ)]  % We expect exactly one valid adjacent cell
+            ),
+            update_cell_to_blue(TargetI, TargetJ),  % Mark the adjacent cell as blue
+            expand_more(TargetI,TargetJ)
+
+        )
+    ).
+
+would_expand_more(I,J) :-
+             count_open_adjacents(I,J,Count),
+             count_blue_adjacents(I,J,Count2),
+             write('\n'),
+             write(Count),
+             write(Count2),
+             write('\n'),
+             Count =:= 1,
+             Count2 =:= 1.
+
+expand_more(I,J):-
+    would_expand_more(I,J),
+    findall((Iop,Jop),
+            (adjacent(I,J,Iop,Jop),\+fxdCell(Iop,Jop,_),\+solved_cell(Iop,Jop,_)),
+            (OpenCells)),
+
+
+    forall(member((Iexp,Jexp),OpenCells),
+           (
+            update_cell_to_blue(Iexp,Jexp),
+            expand_more(Iexp,Jexp)
+           )
+          ).
+
+
