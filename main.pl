@@ -4,8 +4,11 @@
 :- dynamic fxdCell/3.
 :- dynamic solved_cell/3.
 :- dynamic grid_size/2.
-% check if the cell belong to the grid
-% Custom sleep predicate for fractional seconds
+
+
+concatenate([], L, L).
+concatenate([H|T1], L2, [H|T3]) :-
+    concatenate(T1, L2, T3).
 
 within_grid(I, J) :-
     grid_size(Imax, Jmax),
@@ -118,15 +121,32 @@ update_cell_to_blue(I, J) :-
     ; true
     ).
 
+update_cell_to_green(I, J) :-
+    % Make sure the cell is within the grid and not already solved
+    (   within_grid(I, J),\+ solved_cell(I, J, _) ->
+    % Retrieve the current canvas and cell size
+    current_canvas(Canvas),
+    current_cell_size(CellSize),
+
+    % Update the cell to blue
+    draw_cell(Canvas, I, J, green, CellSize),
+    assertz(solved_cell(I, J, green))
+
+    ; true
+    ).
+
 solve_nurikabe :-
     findall(_,all_fixed_cells_green,_),
     findall(_, island_of_1, _),
     separate_adjacent_islands,
     separate_diagonally_adjacent_islands,
     mark_surrounded_squares_as_sea,
-    expand_isolated_blue_cells.
+    expand_isolated_blue_cells,
+    turn_to_green_then_to_blue,
+    findall(_,expand_islands_surrounded_by_sea_with_open_cell,_).
 % Entry point
 :- initialization(start_game).
+
 
 
 %fxd_cell(row,column,numbe)
@@ -319,6 +339,7 @@ all_fixed_cells_green :-
     fxdCell(I,J,Number),
     current_canvas(Canvas),
     current_cell_size(CellSize),
+    \+solved_cell(I,J,_),
     assertz(solved_cell(I, J, green)),
     update_cell(Canvas, I, J, green, CellSize, Number).
 
@@ -420,7 +441,15 @@ mark_surrounded_squares_as_sea :-
 
 
 
+count_out_of_board_adjacents(I,J,Count):-
+    findall((INew, JNew),
+            (
 
+                adjacent_no_strict(I, J, INew, JNew),
+                \+within_grid(INew,JNew)
+               ),
+            OutOfBoardSurroundings),
+    length(OutOfBoardSurroundings, Count).
 % Count the number of invalid adjacent cells around a cell (I, J)
 count_closed_adjacents(I, J, Count) :-
     findall((INew, JNew),
@@ -433,29 +462,43 @@ count_closed_adjacents(I, J, Count) :-
     length(ClosedSurroundnigs, Count).
 
 % Count the number of valid unsolved cells around a blue cell (I, J)
-count_open_adjacents(I, J, Count) :-
-    findall((INew, JNew),
+%
+open_adjacents(I,J,OpenSurroundings):-
+        findall((INew, JNew),
             (
-                write(INew),
-                write(JNew),
                 adjacent(I, J, INew, JNew),
-                \+ solved_cell(INew, JNew, _),
-                write('\n I is '),
-                write(INew),
-                write('\n J is '),
-                write(JNew)
+                \+ solved_cell(INew, JNew, _)
             ),
-            OpenSurroundings),
+            OpenSurroundings).
+
+count_open_adjacents(I, J, Count) :-
+     open_adjacents(I,J,OpenSurroundings),
     length(OpenSurroundings, Count).
 
-count_blue_adjacents(I, J, Count) :-
-    findall((INew, JNew),
+%return blue cells coordinates
+blue_adjacents(I,J,BlueSurroundings) :-findall((INew, JNew),
             (
                 adjacent(I, J, INew, JNew),
                 solved_cell(INew, JNew, blue)
             ),
-            OpenSurroundings),
-    length(OpenSurroundings, Count).
+            BlueSurroundings).
+
+count_blue_adjacents(I, J, Count) :-
+     blue_adjacents(I,J,BlueSurroundings),
+    length(BlueSurroundings, Count).
+
+green_adjacents(I,J,GreenSurroundings) :-findall((INew, JNew),
+            (
+                adjacent(I, J, INew, JNew),
+                solved_cell(INew, JNew, green)
+            ),
+            GreenSurroundings).
+
+
+count_green_adjacents(I, J, Count) :-
+     green_adjacents(I,J,GreenSurroundings),
+    length(GreenSurroundings, Count).
+
 
 % Find isolated blue cells that need to be expanded
 find_isolated_blue_cells(IsolatedBlueCells) :-
@@ -515,4 +558,172 @@ expand_more(I,J):-
            )
           ).
 
+find_all_unsolved_cells(UnSolvedCells) :-
+    grid_size(Imax,Jmax),
+    findall((I,J),
+       (
+           between(1, Imax, I),
+           between(1, Jmax, J),
+           \+solved_cell(I,J,_)
+       ),
+       (UnSolvedCells)
 
+    ).
+
+
+grey_blue_chain_helper([],Visited,Visited).
+grey_blue_chain_helper([(I,J)|ToVisit],Visited,GreyBlueChain):-
+    blue_adjacents(I,J,BlueAdjacents),
+    open_adjacents(I,J,GreyAdjacents),
+    concatenate(BlueAdjacents,GreyAdjacents,BlueGreyAdjacents),
+    findall((I1,J1),
+            (member((I1,J1),BlueGreyAdjacents),
+             \+ member((I1,J1),Visited)
+            )
+            ,
+           Neighbors
+           ),
+    append(Neighbors,ToVisit,NewToVisit),
+    add_if_not_member((I,J),Visited,NewVisited),
+    grey_blue_chain_helper(NewToVisit,NewVisited,GreyBlueChain).
+
+
+grey_blue_chain(I,J,GreyBlueChain) :- solved_cell(I,J,blue),
+    grey_blue_chain_helper([(I,J)],[],ReverseChain),
+    reverse(ReverseChain,GreyBlueChain).
+
+blue_cells_inside_list(List,BlueCells):-
+    findall((I,J),(member((I,J),List),solved_cell(I,J,blue)),BlueCells).
+
+blue_can_be_a_chain :- find_all_blue_cells(AllBlueCells),
+     AllBlueCells = [(I, J)|_],
+     grey_blue_chain(I,J,GreyBlueChain),
+      blue_cells_inside_list(GreyBlueChain,BlueCellsInsideChain),
+     msort(AllBlueCells, SortedAllBlue),  % Sort the list of all blue cells
+    msort(BlueCellsInsideChain, SortedBlueCellsInsideChain),  % Sort the list of connected blue cells
+        (
+        SortedAllBlue == SortedBlueCellsInsideChain ->  !  % Succeed and stop searching for other solutions
+        ;
+         !,fail  % Fail and stop searching for other solutions
+        ).
+
+% this predicate turns cell to blue that would partition the sea if they
+% were green
+turn_to_green_then_to_blue :-
+    find_all_unsolved_cells(UnsolvedCells),
+    forall(
+        member((I, J), UnsolvedCells),
+        (
+            assertz(solved_cell(I, J, green)),
+            (
+                blue_can_be_a_chain ->
+                retractall(solved_cell(I, J, green))
+            ;
+                (retractall(solved_cell(I, J, green)), update_cell_to_blue(I,J))
+            )
+        )
+    ).
+
+
+% Main predicate to find islands surrounded by the sea with one open cell
+islands_surrounded_by_sea_with_open_cell(Islands) :-
+    setof((I, J),
+        (                % Check if the cell meets any of the three specified conditions
+            (
+                solved_cell(I, J, green),   % Cell is green
+                count_open_adjacents(I, J, CountOpen),   % Count open adjacent cells
+                CountOpen =:= 1,   % There must be exactly 1 open adjacent cell
+
+                % First condition: 3 blue adjacents
+                count_blue_adjacents(I, J, CountBlue),
+                CountBlue =:= 3
+            )
+        ;
+            (
+                solved_cell(I, J, green),
+                count_open_adjacents(I, J, CountOpen),
+                CountOpen =:= 1,   % There must be exactly 1 open adjacent cell
+
+                % Second condition: 2 blue adjacents and 1 out-of-bounds
+                count_blue_adjacents(I, J, CountBlue),
+                count_out_of_board_adjacents(I, J, CountOut),
+                CountBlue =:= 2,
+                CountOut =:= 1
+            )
+        ;
+            (
+                solved_cell(I, J, green),
+                count_open_adjacents(I, J, CountOpen),
+                CountOpen =:= 1,   % There must be exactly 1 open adjacent cell
+
+                % Third condition: 1 blue adjacents and 1 out-of-bounds
+                count_blue_adjacents(I, J, CountBlue),
+                count_out_of_board_adjacents(I, J, CountOut),
+                count_open_adjacents(I, J, CountOpen),
+                CountBlue =:= 1,
+                CountOut =:= 2,
+                CountOpen =:=1
+            )
+        ),
+        Islands
+    ).
+fixed_cell_in_island(I,J,FixedCell) :-
+            color_chain(I, J, Island),
+            findall((Ix, Jx,Number), (
+                member((Ix, Jx), Island),
+                fxdCell(Ix, Jx,Number )
+            ), FixedCell).
+
+island_size(I,J,Size) :-
+       color_chain(I, J, Island),
+       length(Island, Size).
+
+island_not_full_yet(I,J):-
+
+    fixed_cell_in_island(I,J,FixedCell),
+     FixedCell = [(Ifx,Jfx,Number)|_],
+
+    island_size(Ifx,Jfx,Size),
+
+    Size < Number.
+
+expand_islands_surrounded_by_sea_with_open_cell:-
+    islands_surrounded_by_sea_with_open_cell(Islands),
+    write('islands are    '),
+    write(Islands),
+    write('\n '),
+    forall(member((I,J),Islands),
+           (
+           island_not_full_yet(I,J),
+          open_adjacents(I,J,OpenAdjacent),
+           OpenAdjacent = [(Iop,Jop)|_],
+           island_not_full_yet(I,J),
+           update_cell_to_green(Iop,Jop),
+           island_expand_more(Iop,Jop)
+           )
+          ).
+
+island_would_expand_more(I,J) :-
+             island_not_full_yet(I,J),
+             count_open_adjacents(I,J,Count),
+             count_green_adjacents(I,J,Count2),
+             write('\n'),
+             write(Count),
+             write(Count2),
+             write('\n'),
+             Count =:= 1,
+             Count2 =:= 1.
+
+island_expand_more(I,J):-
+    island_would_expand_more(I,J),
+    findall((Iop,Jop),
+            (adjacent(I,J,Iop,Jop),\+fxdCell(Iop,Jop,_),\+solved_cell(Iop,Jop,_)),
+            (OpenCells)),
+
+
+    forall(member((Iexp,Jexp),OpenCells),
+           (
+            update_cell_to_green(Iexp,Jexp),
+            island_expand_more(Iexp,Jexp)
+           )
+          ).
