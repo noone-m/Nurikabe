@@ -143,7 +143,9 @@ solve_nurikabe :-
     mark_surrounded_squares_as_sea,
     expand_isolated_blue_cells,
     turn_to_green_then_to_blue,
-    findall(_,expand_islands_surrounded_by_sea_with_open_cell,_).
+    findall(_,expand_islands_surrounded_by_sea_with_open_cell,_),
+    iterate_and_expand_island,
+    island_expandable_only_in_two_directions.
 % Entry point
 :- initialization(start_game).
 
@@ -679,7 +681,6 @@ island_size(I,J,Size) :-
        length(Island, Size).
 
 island_not_full_yet(I,J):-
-
     fixed_cell_in_island(I,J,FixedCell),
      FixedCell = [(Ifx,Jfx,Number)|_],
 
@@ -697,7 +698,6 @@ expand_islands_surrounded_by_sea_with_open_cell:-
            island_not_full_yet(I,J),
           open_adjacents(I,J,OpenAdjacent),
            OpenAdjacent = [(Iop,Jop)|_],
-           island_not_full_yet(I,J),
            update_cell_to_green(Iop,Jop),
            island_expand_more(Iop,Jop)
            )
@@ -727,3 +727,89 @@ island_expand_more(I,J):-
             island_expand_more(Iexp,Jexp)
            )
           ).
+
+find_all_green_cells(GreenCells) :-
+    grid_size(Imax,Jmax),
+    findall((I,J),
+       (
+           between(1, Imax, I),
+           between(1, Jmax, J),
+           solved_cell(I,J,green)
+       ),
+       (GreenCells)
+
+    ).
+
+iterate_and_expand_island  :-
+   find_all_green_cells(GreenCells),
+   forall(
+        member((I, J), GreenCells),
+        (
+            (island_expand_more(I,J);true)
+         )
+    ).
+
+
+islands_need_one_more_green_cell(Islands) :-
+    findall((I,J),
+            (
+              solved_cell(I,J,green),
+              fixed_cell_in_island(I,J,FixedCell),
+              FixedCell = [(_,_,Number)|_],
+              write(FixedCell),
+              write(Number),
+              island_size(I,J,Size),
+              write(Size),
+              Number - Size =:= 1
+            ),
+            (Islands)).
+
+islands_surrounded_by_two_open_sides_perpendicularly(Islands):-
+          findall((I,J),
+            (
+                 solved_cell(I,J,green),
+                 count_open_adjacents(I,J,Count),
+                 Count =:= 2,
+                 open_adjacents(I,J,OpenAdjacents),
+                 OpenAdjacents = [(I1,J1),(I2,J2)|_],
+                 Idelta is I2 - I1,
+                 Jdelta is J2 - J1,
+                 abs(Idelta) =:= 1,
+                 abs(Jdelta) =:=1
+
+             ),
+            (Islands)).
+
+% Define the main predicate
+get_diagnonal_square_between_two_open_cells(I, J, Id, Jd) :-
+    % Retrieve the list of open adjacent cells
+    open_adjacents(I, J, OpenAdjacents),
+
+    % Ensure the list has at least two elements
+    OpenAdjacents = [(I1, J1), (I2, J2) | _],
+
+    % Determine Id and Jd based on the difference in I and J values
+    (
+        % If I1 is different from I, set Id to I1, otherwise set it to I2
+        (I1 =\= I, Id = I1) ; (I2 =\= I, Id = I2)
+    ),
+    (
+        % If J1 is different from J, set Jd to J1, otherwise set it to J2
+        (J1 =\= J, Jd = J1) ; (J2 =\= J, Jd = J2)
+    ),!.
+
+% when an island needs only one more green cell to be full and can
+% expand in two directions the diagonal square must be blue
+
+island_expandable_only_in_two_directions :-
+
+islands_surrounded_by_two_open_sides_perpendicularly(Islands),
+
+forall(
+        member((I, J), Islands),
+        (
+
+           get_diagnonal_square_between_two_open_cells(I,J,Id,Jd),
+            update_cell_to_blue(Id,Jd)
+        )
+    ).
