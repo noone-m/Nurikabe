@@ -18,7 +18,7 @@ within_grid(I, J) :-
 % Predicate to start the Nurikabe game with given rows and columns
 start_game :-
     delete_all_dynamic_facts,
-    new(Window, dialog('Nurikabe Game')),  % Create the main dialog window
+    new(Window, dialog('Nurikabe solver')),  % Create the main dialog window
     send(Window, size, size(750, 800)),    % Set the size of the window
 
     % Grid layout for input fields and buttons
@@ -324,7 +324,7 @@ no_2_by_2_sea :-
 
 
 one_fixed_cell_in_island :-
-    findall((I, J), solved_cell(I, J,green), AllFixedCells),
+    findall((I, J), fxdCell(I, J,_), AllFixedCells),
     forall(
         member((I, J), AllFixedCells),
         (
