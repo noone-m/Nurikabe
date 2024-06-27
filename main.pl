@@ -5,7 +5,6 @@
 :- dynamic solved_cell/3.
 :- dynamic grid_size/2.
 
-
 concatenate([], L, L).
 concatenate([H|T1], L2, [H|T3]) :-
     concatenate(T1, L2, T3).
@@ -26,8 +25,8 @@ start_game :-
     send(Window, append, new(Grid, dialog_group(grid_layout, group))),
 
     % Add rows and columns fields to the grid
-    send(Grid, append, new(RowsField, int_item(rows,7)), right),
-    send(Grid, append, new(ColsField, int_item(columns,7)), right),
+    send(Grid, append, new(RowsField, int_item(rows,6)), right),
+    send(Grid, append, new(ColsField, int_item(columns,6)), right),
 
      % Canvas for drawing the board
     send(Window, append, new(Canvas, picture)),
@@ -135,7 +134,28 @@ update_cell_to_green(I, J) :-
     ; true
     ).
 
+update_cell_to_grey(I, J) :-
+    % Make sure the cell is within the grid and not already solved
+    (   within_grid(I, J),solved_cell(I, J, _) ->
+    % Retrieve the current canvas and cell size
+    current_canvas(Canvas),
+    current_cell_size(CellSize),
+
+    % Update the cell to blue
+    draw_cell(Canvas, I, J, grey, CellSize),
+    retractall(solved_cell(I, J, _))
+    ; true
+    ).
+
+draw_fixed_cells :-
+    forall(fxdCell(I,J,Number),(
+    current_canvas(Canvas),
+    current_cell_size(CellSize),
+    update_cell(Canvas, I, J, white, CellSize, Number)
+           )).
 solve_nurikabe :-
+    findall((I,J),solved_cell(I,J,_),BeforeSolvedCells),
+    length(BeforeSolvedCells,L1),
     findall(_,all_fixed_cells_green,_),
     findall(_, island_of_1, _),
     separate_adjacent_islands,
@@ -145,7 +165,13 @@ solve_nurikabe :-
     turn_to_green_then_to_blue,
     findall(_,expand_islands_surrounded_by_sea_with_open_cell,_),
     iterate_and_expand_island,
-    island_expandable_only_in_two_directions.
+    island_expandable_only_in_two_directions,
+    turn_to_blue_then_to_green,
+    surround_full_island_with_water,
+    unreachable_squares_are_blue,
+    findall((I,J),solved_cell(I,J,_),AfterSolvedCells),
+    length(AfterSolvedCells,L2),
+    (L2 =:= L1 -> findall(_,expand_to_random_green_then_test,_);true).
 % Entry point
 :- initialization(start_game).
 
@@ -298,7 +324,7 @@ no_2_by_2_sea :-
 
 
 one_fixed_cell_in_island :-
-    findall((I, J), fxdCell(I, J, _), AllFixedCells),
+    findall((I, J), solved_cell(I, J,green), AllFixedCells),
     forall(
         member((I, J), AllFixedCells),
         (
@@ -618,7 +644,7 @@ turn_to_green_then_to_blue :-
         (
             assertz(solved_cell(I, J, green)),
             (
-                blue_can_be_a_chain ->
+                blue_can_be_a_chain,one_fixed_cell_in_island ->
                 retractall(solved_cell(I, J, green))
             ;
                 (retractall(solved_cell(I, J, green)), update_cell_to_blue(I,J))
@@ -714,8 +740,14 @@ island_would_expand_more(I,J) :-
              Count =:= 1,
              Count2 =:= 1.
 
+island_expandable(I,J) :-
+    island_not_full_yet(I,J),
+    update_cell_to_green(I,J),
+    count_open_adjacents(I,J,Count),
+    Count =:= 1.
+
 island_expand_more(I,J):-
-    island_would_expand_more(I,J),
+    island_expandable(I,J),
     findall((Iop,Jop),
             (adjacent(I,J,Iop,Jop),\+fxdCell(Iop,Jop,_),\+solved_cell(Iop,Jop,_)),
             (OpenCells)),
@@ -724,7 +756,8 @@ island_expand_more(I,J):-
     forall(member((Iexp,Jexp),OpenCells),
            (
             update_cell_to_green(Iexp,Jexp),
-            island_expand_more(Iexp,Jexp)
+            (blue_can_be_a_chain-> island_expand_more(Iexp,Jexp);update_cell_to_grey(Iexp,Jexp))
+
            )
           ).
 
@@ -737,6 +770,18 @@ find_all_green_cells(GreenCells) :-
            solved_cell(I,J,green)
        ),
        (GreenCells)
+
+    ).
+
+find_all_fixed_cells(FixedCells) :-
+    grid_size(Imax,Jmax),
+    findall((I,J),
+       (
+           between(1, Imax, I),
+           between(1, Jmax, J),
+           fxdCell(I,J,_)
+       ),
+       (FixedCells)
 
     ).
 
@@ -803,8 +848,9 @@ get_diagnonal_square_between_two_open_cells(I, J, Id, Jd) :-
 
 island_expandable_only_in_two_directions :-
 
-islands_surrounded_by_two_open_sides_perpendicularly(Islands),
-
+islands_surrounded_by_two_open_sides_perpendicularly(Islands1),
+islands_need_one_more_green_cell(Islands2),
+intersection(Islands1,Islands2,Islands),
 forall(
         member((I, J), Islands),
         (
@@ -813,3 +859,144 @@ forall(
             update_cell_to_blue(Id,Jd)
         )
     ).
+
+
+turn_to_blue_then_to_green :-
+    find_all_unsolved_cells(UnsolvedCells),
+    forall(
+        member((I, J), UnsolvedCells),
+        (
+            assertz(solved_cell(I, J, blue)),
+            (
+                no_2_by_2_sea ->
+                retractall(solved_cell(I, J, blue))
+            ;
+                (retractall(solved_cell(I, J, blue)), update_cell_to_green(I,J))
+            )
+        )
+    ).
+
+
+
+
+surround_full_island_with_water :-
+        find_all_fixed_cells(FixedCells),
+        forall(member((I,J),FixedCells),
+            (
+              (\+island_not_full_yet(I,J),
+              color_chain(I,J,Chain),
+              forall(member((Ic,Jc),Chain),
+                    (
+                        open_adjacents(Ic,Jc,OpenAdjacents),
+                         forall(member((Iop,Jop),OpenAdjacents),
+                    (
+                     update_cell_to_blue(Iop,Jop)
+                      )
+                    )
+
+                      )
+                    ));true)).
+
+manhattan_distance((X1, Y1), (X2, Y2), Distance) :-
+    Dx is abs(X2 - X1),
+    Dy is abs(Y2 - Y1),
+    Distance is Dx + Dy.
+
+
+unreachable_squares_are_blue :-
+    find_all_unsolved_cells(UnsolvedCells),
+    find_all_fixed_cells(FixedCells),
+    forall(
+        member((Iu, Ju), UnsolvedCells),
+        (
+            (   % Check if for every fixed cell, the distance to this unsolved cell is greater than the fixed cell's number
+                forall(
+                    member((Ifx, Jfx), FixedCells),
+                    (
+                        fxdCell(Ifx, Jfx, Number),
+                        (island_not_full_yet(Ifx,Jfx)->
+                        manhattan_distance((Ifx, Jfx), (Iu, Ju), Distance),
+                        Distance >= Number ;true)
+                    )
+                )
+            ->  % If the condition is satisfied for all fixed cells, update the unsolved cell to blue
+                update_cell_to_blue(Iu, Ju)
+            ;   true % If not, do nothing
+            )
+        )
+    ).
+
+green_but_no_fixed_cell(GreenNoFixedCell) :-
+       find_all_green_cells(GreenCells),
+       findall(
+        (I, J),
+        (
+            member((I, J), GreenCells),
+            fixed_cell_in_island(I,J,FixedCell),
+            length(FixedCell,L),
+            L =:= 0
+        ),GreenNoFixedCell
+    ).
+
+
+reachable_by_islnads(I,J,Islands):-
+     findall(
+        (Ifx, Jfx),
+        (
+            fxdCell(Ifx,Jfx,Number),
+            manhattan_distance((I,J),(Ifx,Jfx),Distance),
+            island_not_full_yet(Ifx,Jfx),
+            Number > Distance
+        ),Islands
+    ).
+
+expand_to_random_green_then_test :-
+    solved_cell(I,J,green),
+    island_not_full_yet(I,J),
+    open_adjacents(I,J,OpenAdjacents),
+    forall(member((Iop,Jop),OpenAdjacents),
+           (   update_cell_to_green(Iop,Jop),
+       (one_fixed_cell_in_island,island_not_full_yet(Iop,Jop),blue_can_be_a_chain,open_surround_by_two_diffrent_islands_is_zero ->!; update_cell_to_grey(Iop,Jop))
+           )).
+
+open_surrounded_by_green(OpenCells):-
+           find_all_unsolved_cells(UnsolvedCells),
+          findall((I,J),
+            (
+                 member((I,J),UnsolvedCells),
+                 adjacent(I,J,Ia,Ja),
+                 solved_cell(Ia,Ja,green)
+                ),
+            (OpenCells)).
+
+count_islands(Greens,Count) :-
+    findall((Ifx,Jfx),
+            (
+                  member((I,J),Greens),
+                   fixed_cell_in_island(I,J,FixedCell),
+                   FixedCell = [(Ifx,Jfx)|_]
+
+          ),
+            Islands),
+    length(Islands,Count).
+
+
+
+open_surrounded_by_two_diffrent_islands(OpenCells) :-
+    open_surrounded_by_green(OpenCellsSourroundedGreen),
+      findall((I,J),
+            (
+                  member((I,J),OpenCellsSourroundedGreen),
+                  green_adjacents(I,J,Adjacents),
+                  count_islands(Adjacents,Count),
+                  Count > 1
+                 ),
+            (OpenCells)).
+
+
+open_surround_by_two_diffrent_islands_is_zero :-
+    open_surrounded_by_two_diffrent_islands(OpenCells),
+    length(OpenCells,L),
+    L =:= 0.
+
+
